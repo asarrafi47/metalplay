@@ -26,8 +26,8 @@ metalplay = "metalplay.cli:main"
 metalplay-gui = "metalplay.gui.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/asarrafi/metalplay"
-Documentation = "https://github.com/asarrafi/metalplay#readme"
+Homepage = "https://github.com/asarrafi47/metalplay"
+Documentation = "https://github.com/asarrafi47/metalplay#readme"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -38,7 +38,7 @@ For Direct3D 12 games, MetalPlay can use **vkd3d + MoltenVK** to route D3D12 →
 ## Quick Start
 
 ```bash
-git clone https://github.com/asarrafi/metalplay.git
+git clone https://github.com/asarrafi47/metalplay.git
 cd metalplay
 python3 -m venv .venv
 source .venv/bin/activate
