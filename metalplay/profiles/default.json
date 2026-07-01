@@ -1,0 +1,45 @@
+{
+  "steam": {
+    "description": "Steam client — Direct3D 11 via DXMT → Metal",
+    "graphics": "dxmt",
+    "env": {
+      "STEAM_RUNTIME": "0",
+      "STEAM_DISABLE_GPU": "0",
+      "WINEESYNC": "0",
+      "WINEFSYNC": "0"
+    },
+    "dll_overrides": "dxgi,d3d11,d3d10core=n,b;d3d12=n,b;vulkan-1=n,b;winemenubuilder.exe=d;steam.exe=b,n"
+  },
+  "steam-d3d11": {
+    "description": "Steam game — DirectX 11 via DXMT → Metal (recommended)",
+    "graphics": "dxmt",
+    "env": {
+      "STEAM_RUNTIME": "0"
+    },
+    "dll_overrides": "dxgi,d3d11,d3d10core=n,b;winemenubuilder.exe=d"
+  },
+  "steam-d3d12": {
+    "description": "Steam game — DirectX 12 via vkd3d + MoltenVK → Metal",
+    "graphics": "moltenvk",
+    "env": {
+      "STEAM_RUNTIME": "0",
+      "MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS": "1"
+    },
+    "dll_overrides": "d3d12=n,b;d3d11=n,b;dxgi=n,b;vulkan-1=n,b;winemenubuilder.exe=d"
+  },
+  "epic-games": {
+    "description": "Epic Games Launcher",
+    "graphics": "dxmt",
+    "dll_overrides": "dxgi,d3d11,d3d10core=n,b;"
+  },
+  "d3d12-game": {
+    "description": "Direct3D 12 titles via vkd3d + MoltenVK → Metal",
+    "graphics": "moltenvk",
+    "dll_overrides": "d3d12=n,b;d3d11=n,b;dxgi=n,b;vulkan-1=n,b;"
+  },
+  "legacy-opengl": {
+    "description": "Older OpenGL/DirectX 9 games via WineD3D",
+    "graphics": "wined3d",
+    "dll_overrides": "d3d9,b;d3d11,b;dxgi,b"
+  }
+}

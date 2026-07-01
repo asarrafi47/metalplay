@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#12121a">
+  <title>MetalPlay</title>
+  <link rel="icon" type="image/png" href="/icon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="/icon-72.png" width="40" height="40" alt="">
+      <div class="brand-text">
+        <h1>MetalPlay</h1>
+        <span>Windows games on macOS via Apple Metal</span>
+      </div>
+    </div>
+    <span class="version-pill" id="versionPill">v…</span>
+  </header>
+
+  <nav class="app-nav">
+    <button class="active" id="tabHome" onclick="showTab('home')">Home</button>
+    <button id="tabSteam" onclick="showTab('steam')">Steam</button>
+    <button id="tabLaunch" onclick="showTab('launch')">Launch Game</button>
+  </nav>
+
+  <main>
+    <!-- HOME TAB -->
+    <div id="viewHome" class="view">
+      <div class="card play-hub">
+        <img class="hero-icon" src="/icon-128.png" width="72" height="72" alt="">
+        <h2>Ready to Play</h2>
+        <p id="playSubtitle">Windows games on your Mac — DirectX routed through Metal</p>
+        <div class="play-actions">
+          <button class="hero steam" id="btnOpenSteam" onclick="steamLaunch(event)">▶ Open Steam</button>
+          <button class="secondary" id="btnStopSteam" onclick="steamStop(event)" style="display:none">Stop Steam</button>
+          <button class="secondary" id="btnFirstSetup" onclick="firstTimeSetup()">First-Time Setup</button>
+        </div>
+        <div id="playHint" class="status-line" style="margin-top:12px"></div>
+        <div id="quickPlay"></div>
+        <div id="tuneBadge" class="tune-badge hidden"></div>
+      </div>
+      <div class="card">
+        <h2>System Status</h2>
+        <div id="status">Loading…</div>
+        <div class="card-actions">
+          <button class="secondary" onclick="quickSetup()">Quick Setup (Free)</button>
+          <button class="secondary" onclick="applyTune()">Optimize This Mac</button>
+          <button class="secondary" onclick="refresh()">Refresh</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Controllers</h2>
+        <div class="card-actions">
+          <button class="secondary small" onclick="refreshController(true)">Refresh controllers</button>
+        </div>
+        <div id="controllerDevices">Loading…</div>
+        <div id="controllerDoctor" style="margin-top:12px"></div>
+        <div id="controllerProfiles" style="margin-top:14px"></div>
+      </div>
+      <div class="card">
+        <h2>Bottles</h2>
+        <div id="bottles">Loading…</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <input id="newBottle" placeholder="Bottle name" value="gaming" style="flex:1;margin:0">
+          <button onclick="createBottle()">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEAM TAB -->
+    <div id="viewSteam" class="view hidden">
+      <div class="card">
+        <h2 class="steam">Windows Steam</h2>
+        <div class="flow">
+          <strong>How it works:</strong> MetalPlay creates a Windows 10 bottle, installs the
+          <em>Windows</em> Steam client, and routes DirectX 11/12 through Metal (DXMT / MoltenVK).
+          Download Windows-only games from Steam, then play them natively on your Mac.
+        </div>
+        <div id="steamStatus">Loading…</div>
+        <div class="card-actions">
+          <button class="steam" onclick="steamSetup()">Setup Steam (Full)</button>
+          <button class="secondary" onclick="steamLaunch(event)">Open Steam Client</button>
+          <button class="secondary" id="btnStopSteamTab" onclick="steamStop(event)" style="display:none">Stop Steam</button>
+          <button class="secondary" onclick="refreshSteam()">Refresh Library</button>
+          <button class="secondary" onclick="showRockstarLogs()">Rockstar Logs</button>
+        </div>
+        <pre id="rockstarLogs" class="log-panel hidden" style="margin-top:12px;max-height:220px;overflow:auto;font-size:0.72rem"></pre>
+        <p style="margin-top:12px;font-size:0.8rem;color:var(--muted)">
+          First-time setup downloads Wine + DXMT + Steam (~200 MB). Log in to Steam as on Windows.
+        </p>
+      </div>
+      <div class="card">
+        <h2 class="steam">Your Steam Library</h2>
+        <div id="steamGames">
+          <div class="status-line">Setup Steam to see installed games.</div>
+        </div>
+        <p style="margin-top:12px;font-size:0.8rem;color:var(--muted)">
+          D3D11 games → <strong style="color:var(--green)">dxmt</strong> &nbsp;|&nbsp;
+          D3D12 games → <strong style="color:var(--accent)">moltenvk</strong>
+        </p>
+      </div>
+    </div>
+
+    <!-- LAUNCH TAB -->
+    <div id="viewLaunch" class="view hidden">
+      <div class="card" style="grid-column:1/-1">
+        <h2>Launch Game (Manual)</h2>
+        <label>Executable path (.exe)</label>
+        <input id="exePath" placeholder="/path/to/game.exe or C:\Program Files\...">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label>Bottle</label>
+            <select id="bottleSelect"></select>
+          </div>
+          <div>
+            <label>Graphics backend</label>
+            <select id="graphics">
+              <option value="dxmt">dxmt — D3D11 → Metal (fastest)</option>
+              <option value="moltenvk">moltenvk — D3D12 → Metal</option>
+              <option value="wined3d">wined3d — legacy OpenGL</option>
+            </select>
+          </div>
+        </div>
+        <button class="launch-btn" onclick="launchGame()">▶ Launch Game</button>
+      </div>
+    </div>
+
+    <div class="log-header">
+      <span>Activity</span>
+    </div>
+    <div id="log"></div>
+  </main>
+
+  <script>
+    let logLineCount = 0;
+    let pollTimer = null;
+    let refreshPending = null;
+    let steamFullLoaded = false;
+    let pageVisible = !document.hidden;
+    let steamGamesCache = [];
+    let lastControllerFetch = 0;
+    const CONTROLLER_POLL_MS = 8000;
+
+    document.addEventListener('visibilitychange', () => {
+      pageVisible = !document.hidden;
+      if (pageVisible) schedulePoll();
+      else if (pollTimer) clearInterval(pollTimer);
+    });
+
+    function showTab(name) {
+      document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      const views = { home: 'viewHome', steam: 'viewSteam', launch: 'viewLaunch' };
+      document.getElementById(views[name]).classList.remove('hidden');
+      document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+      if (name === 'steam') refreshSteam(false);
+    }
+
+    async function api(path, method='GET', body=null) {
+      const opts = { method, headers: body ? {'Content-Type':'application/json'} : {} };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch('/api/' + path, opts);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) {
+        const msg = data.error || `HTTP ${r.status}`;
+        appendLog('API error (' + path + '): ' + msg);
+        throw new Error(msg);
+      }
+      return data;
+    }
+
+    function appendLog(msg) {
+      const el = document.getElementById('log');
+      const row = document.createElement('div');
+      row.style.color = '#f38ba8';
+      row.textContent = msg;
+      el.appendChild(row);
+      logLineCount += 1;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function scheduleRefresh() {
+      if (refreshPending) clearTimeout(refreshPending);
+      refreshPending = setTimeout(() => {
+        refreshPending = null;
+        refreshSteam(true);
+        refresh();
+      }, 400);
+    }
+
+    async function refresh() {
+      const s = await api('status');
+      const pill = document.getElementById('versionPill');
+      if (pill) pill.textContent = 'v' + (s.version || '?');
+      const rosettaOk = s.rosetta;
+      document.getElementById('status').innerHTML = `
+        <div class="status-grid">
+          <div class="status-item">
+            <span class="status-dot ok"></span>
+            <span>macOS ${s.macos} · ${s.arch}</span>
+          </div>
+          <div class="status-item">
+            <span class="status-dot ${rosettaOk ? 'ok' : 'bad'}"></span>
+            <span>Rosetta ${rosettaOk ? 'ready' : 'missing'}</span>
+          </div>
+          <div class="status-item">
+            <span class="status-dot ${s.dxmt ? 'ok' : 'bad'}"></span>
+            <span>DXMT ${s.dxmt ? 'installed' : 'not installed'}</span>
+          </div>
+          <div class="status-item">
+            <span class="status-dot ${s.runtimes.length ? 'ok' : 'warn'}"></span>
+            <span>${s.runtimes.length
+              ? s.runtimes.map(r => `${r.name} ${r.version}${r.metal ? ' · Metal' : ''}`).join(' · ')
+              : 'No Wine — run Quick Setup'}</span>
+          </div>
+        </div>`;
+
+      const sel = document.getElementById('bottleSelect');
+      const current = sel.value;
+      sel.innerHTML = s.bottles.map(b => `<option value="${b.name}">${b.name} [${b.graphics}]</option>`).join('');
+      if (current && [...sel.options].some(o => o.value === current)) sel.value = current;
+      document.getElementById('bottles').innerHTML = s.bottles.length
+        ? s.bottles.map(b => `<div class="bottle-item"><span>${b.name} <small style="color:var(--muted)">[${b.graphics}]</small></span>
+          <button class="danger small" onclick="deleteBottle('${b.name}')">Delete</button></div>`).join('')
+        : '<div class="status-line">No bottles yet — create one above.</div>';
+    }
+
+    function applySteamState(st) {
+      const setupBtn = document.getElementById('btnFirstSetup');
+      const openBtn = document.getElementById('btnOpenSteam');
+      const stopBtn = document.getElementById('btnStopSteam');
+      const stopBtnTab = document.getElementById('btnStopSteamTab');
+      const hint = document.getElementById('playHint');
+      if (setupBtn) setupBtn.style.display = st.installed ? 'none' : 'inline-block';
+      if (openBtn) {
+        openBtn.disabled = !st.installed;
+        openBtn.style.opacity = st.installed ? '1' : '0.45';
+        openBtn.textContent = st.running ? '▶ Focus / Restart Steam' : '▶ Open Steam';
+      }
+      if (stopBtn) stopBtn.style.display = st.running ? 'inline-block' : 'none';
+      if (stopBtnTab) stopBtnTab.style.display = st.running ? 'inline-block' : 'none';
+      if (hint) {
+        if (st.stub_only) {
+          hint.innerHTML = '<span class="bad">⏳</span> Downloading Steam client — run <code>metalplay steam bootstrap</code>';
+        } else if (st.running && st.ui_windows === 0) {
+          hint.innerHTML = '<span class="bad">⏳</span> Wine Steam is running in the background — click <strong>Stop Steam</strong>, then <strong>Open Steam</strong>';
+        } else if (st.running) {
+          hint.innerHTML = '<span class="ok">✓</span> Windows Steam (Wine bottle) is running';
+        } else {
+          hint.innerHTML = st.installed
+            ? '<span class="ok">✓</span> Steam ready'
+            : '<span class="bad">✗</span> Run <strong>First-Time Setup</strong>';
+        }
+      }
+      const sub = document.getElementById('playSubtitle');
+      if (sub) {
+        sub.textContent = st.installed
+          ? 'Steam is ready — open it or play an installed game below'
+          : 'Run First-Time Setup once, then open Steam and download games';
+      }
+      const statusEl = document.getElementById('steamStatus');
+      if (statusEl) {
+        statusEl.innerHTML = st.stub_only
+          ? `<div class="status-line"><span class="bad">⏳</span> Steam stub only — run bootstrap</div>`
+          : st.installed
+          ? `<div class="status-line"><span class="ok">✓</span> Windows Steam installed</div>
+             <div class="status-line">${st.running ? '<span class="ok">●</span> Running' : 'Not running'}</div>
+             ${st.game_count != null ? `<div class="status-line">${st.game_count} game(s)</div>` : ''}
+             <div class="status-line" style="word-break:break-all">${st.steam_root || ''}</div>`
+          : `<div class="status-line"><span class="bad">✗</span> Steam not installed</div>`;
+      }
+    }
+
+    async function refreshSteam(light = false) {
+      try {
+        const path = light ? 'steam/status?light=1' : 'steam/status';
+        const st = await api(path);
+        applySteamState(st);
+        if (light) return;
+        steamFullLoaded = true;
+        steamGamesCache = (st.games || []).filter(g => g.installed);
+
+        const quick = document.getElementById('quickPlay');
+        if (quick) {
+          const installed = (st.games || []).filter(g => g.installed);
+          const rockstarIds = new Set(['271590', '3240220']);
+          const hasRockstar = installed.some(g => rockstarIds.has(String(g.app_id)));
+          quick.innerHTML = installed.length
+            ? installed.map(g => `<button class="steam" onclick="steamRun('${g.app_id}')">▶ ${escapeHtml(g.name)}</button>`).join('')
+              + (hasRockstar
+                ? '<div class="status-line" style="margin-top:10px"><strong>GTA V Enhanced:</strong> use the <strong>Play button below</strong> in MetalPlay — not Play inside the Wine Steam window. Run <code>metalplay steam repair</code> first. Rockstar Launcher may still fail on free Wine; CrossOver 24+ is the reliable Mac path.</div>'
+                : '')
+            : (st.installed ? '<div class="status-line">No games installed yet.</div>' : '');
+        }
+
+        const gamesEl = document.getElementById('steamGames');
+        if (!gamesEl) return;
+        const rockstarIds = new Set(['271590', '3240220']);
+        if (!st.games || !st.games.length) {
+          gamesEl.innerHTML = '<div class="status-line">No installed games yet.</div>';
+          return;
+        }
+        gamesEl.innerHTML = st.games.map(g => `
+          <div class="game-item">
+            <div class="meta">
+              <strong>${escapeHtml(g.name)}</strong>
+              <small>App ID ${g.app_id} · ${g.graphics} · ${g.installed ? 'installed' : 'not installed'}</small>
+            </div>
+            <select id="gfx-${g.app_id}" style="width:auto;margin:0;padding:4px 8px;font-size:0.75rem">
+              <option value="dxmt" ${g.graphics==='dxmt'?'selected':''}>D3D11→Metal</option>
+              <option value="moltenvk" ${g.graphics==='moltenvk'?'selected':''}>D3D12→Metal</option>
+              <option value="auto" ${g.graphics==='auto'?'selected':''}>auto</option>
+            </select>
+            <button class="steam small" data-action="save-gfx" data-appid="${g.app_id}" data-name="${escapeHtml(g.name)}">Save</button>
+            <button class="small" data-action="play" data-appid="${g.app_id}">▶ Play</button>
+          </div>`).join('')
+          + (st.games.some(g => rockstarIds.has(String(g.app_id)) && g.installed)
+            ? '<div class="status-line" style="margin-top:14px">For <strong>GTA V</strong>: click <strong>▶ Play here</strong> — not inside the Wine Steam window. Rockstar Launcher often fails on free Wine; <strong>CrossOver 24+</strong> is the reliable option on Mac.</div>'
+            : '');
+      } catch (e) {
+        const statusEl = document.getElementById('steamStatus');
+        if (statusEl) statusEl.innerHTML = '<div class="status-line bad">Could not reach Steam API</div>';
+      }
+    }
+
+    function controllerKindLabel(kind) {
+      const labels = { xbox: 'Xbox', dualsense: 'PS5', dualshock: 'PS4', generic: 'Gamepad' };
+      return labels[kind] || labels.generic;
+    }
+
+    function renderControllerStatus(data) {
+      const devEl = document.getElementById('controllerDevices');
+      const docEl = document.getElementById('controllerDoctor');
+      const profEl = document.getElementById('controllerProfiles');
+      if (!devEl || !docEl || !profEl) return;
+
+      const connected = (data.controllers || []).filter(c => c.connected !== false);
+      if (!data.available) {
+        devEl.innerHTML = '<div class="status-line">Controller support not loaded.</div>';
+      } else if (!connected.length) {
+        devEl.innerHTML = '<div class="status-line">No controllers detected — pair Xbox or PS5 in System Settings.</div>';
+      } else {
+        devEl.innerHTML = connected.map(c => {
+          const kind = c.kind || 'generic';
+          const conn = c.connection && c.connection !== 'unknown' ? ` · ${c.connection}` : '';
+          return `<span class="controller-chip ${kind}"><span class="label">${controllerKindLabel(kind)}</span>${escapeHtml(c.name || 'Controller')}<small>${conn}</small></span>`;
+        }).join('');
+      }
+
+      const doc = data.doctor || {};
+      const warnings = doc.warnings || [];
+      const checks = doc.checks || [];
+      const messages = doc.messages || [];
+      const fmtCheck = c => {
+        const cls = c.startsWith('OK:') ? 'ok' : c.startsWith('WARN:') ? 'doctor-warn' : 'status-line';
+        return `<div class="${cls}">${escapeHtml(c)}</div>`;
+      };
+      const checkHtml = checks.map(fmtCheck).join('');
+      const warnHtml = warnings.map(w => `<div class="doctor-warn">→ ${escapeHtml(w)}</div>`).join('');
+      const msgHtml = messages.map(m => `<div class="status-line">${escapeHtml(m)}</div>`).join('');
+      if (doc.ok && !warnings.length && !checks.some(c => c.startsWith('WARN:'))) {
+        docEl.innerHTML = '<div class="doctor-ok">✓ Controller doctor: OK</div>' + checkHtml;
+      } else {
+        docEl.innerHTML = (doc.ok ? '<div class="doctor-ok">Controller doctor</div>' : '<div class="bad">Controller doctor: review below</div>') + checkHtml + warnHtml + msgHtml;
+      }
+
+      const profiles = data.profiles || [];
+      if (!profiles.length) {
+        profEl.innerHTML = steamGamesCache.length
+          ? '<div class="status-line" style="margin-top:8px">No per-game controller profiles yet.</div>'
+          : '';
+        return;
+      }
+
+      profEl.innerHTML = '<div class="status-line" style="margin-bottom:8px">Game controller profiles</div>' +
+        profiles.map(p => `
+          <div class="profile-row">
+            <span class="name">${escapeHtml(p.name || p.app_id)}</span>
+            <label class="toggle"><input type="checkbox" id="si-${p.app_id}" ${p.steam_input ? 'checked' : ''}> Steam Input</label>
+            <select id="pref-${p.app_id}">
+              <option value="xinput" ${p.prefer==='xinput'?'selected':''}>XInput</option>
+              <option value="dinput" ${p.prefer==='dinput'?'selected':''}>DInput</option>
+            </select>
+            <button class="small secondary" data-action="save-ctrl" data-appid="${p.app_id}" data-name="${escapeHtml(p.name || '')}">Save</button>
+          </div>`).join('');
+    }
+
+    async function refreshController(force = false) {
+      if (!force && Date.now() - lastControllerFetch < CONTROLLER_POLL_MS) return;
+      lastControllerFetch = Date.now();
+      const devEl = document.getElementById('controllerDevices');
+      if (force && devEl) devEl.innerHTML = '<div class="status-line">Scanning…</div>';
+      try {
+        const data = await api('controller/status' + (force ? '?force=1' : ''));
+        renderControllerStatus(data);
+      } catch (e) {
+        if (devEl) devEl.innerHTML = '<div class="status-line bad">Could not load controller status — ' + escapeHtml(e.message || 'unknown error') + '</div>';
+      }
+    }
+
+    function saveControllerProfile(appId, name) {
+      const steamInput = document.getElementById('si-' + appId)?.checked || false;
+      const prefer = document.getElementById('pref-' + appId)?.value || 'xinput';
+      post('controller/set-profile', { app_id: appId, steam_input: steamInput, prefer, name })
+        .then(() => refreshController(true)).catch(() => {});
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    }
+
+    async function refreshLog() {
+      try {
+        const d = await api('log?since=' + logLineCount);
+        if (!d.lines || !d.lines.length) return;
+        const el = document.getElementById('log');
+        const frag = document.createDocumentFragment();
+        for (const line of d.lines) {
+          const row = document.createElement('div');
+          row.textContent = line;
+          frag.appendChild(row);
+        }
+        el.appendChild(frag);
+        logLineCount = d.total;
+        el.scrollTop = el.scrollHeight;
+      } catch (_) { /* ignore */ }
+    }
+
+    async function post(action, body={}, clickedBtn=null) {
+      if (clickedBtn) clickedBtn.disabled = true;
+      try {
+        let r;
+        try {
+          r = await fetch('/api/' + action, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+          });
+        } catch (netErr) {
+          throw new Error('Cannot reach MetalPlay — reopen MetalPlay from Applications');
+        }
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.ok === false) {
+          throw new Error(data.error || `HTTP ${r.status}`);
+        }
+        if (data.message) refreshLog();
+        scheduleRefresh();
+        return data;
+      } catch (e) {
+        appendLog('Failed (' + action + '): ' + e.message);
+        throw e;
+      } finally {
+        if (clickedBtn) clickedBtn.disabled = false;
+      }
+    }
+
+    function postFromClick(action, body, ev) {
+      const btn = ev?.target?.closest?.('button') || null;
+      return post(action, body, btn);
+    }
+
+    function quickSetup() { postFromClick('setup', {}, event).catch(() => {}); }
+    function createBottle() {
+      postFromClick('bottle/create', { name: document.getElementById('newBottle').value }, event).catch(() => {});
+    }
+    function deleteBottle(name) {
+      if (confirm('Delete bottle ' + name + '?')) post('bottle/delete', { name }).catch(() => {});
+    }
+    function launchGame() {
+      postFromClick('launch', {
+        exe: document.getElementById('exePath').value,
+        bottle: document.getElementById('bottleSelect').value,
+        graphics: document.getElementById('graphics').value,
+      }, event).catch(() => {});
+    }
+    async function firstTimeSetup() {
+      appendLog('Starting first-time setup...');
+      await postFromClick('steam/setup', {}, event);
+    }
+    async function applyTune() {
+      appendLog('Optimizing for this Mac...');
+      await postFromClick('tune/apply', {}, event);
+    }
+
+    async function refreshTune() {
+      try {
+        const t = await api('tune/status');
+        const el = document.getElementById('tuneBadge');
+        if (el && t.applied) {
+          el.classList.remove('hidden');
+          el.textContent = `Tuned for ${t.chip || 'this Mac'} · ${t.game_resolution || ''}`;
+        }
+      } catch (_) { /* optional */ }
+    }
+
+    function steamSetup() { postFromClick('steam/setup', {}, event).catch(() => {}); }
+
+    async function showRockstarLogs() {
+      const panel = document.getElementById('rockstarLogs');
+      if (!panel) return;
+      panel.classList.remove('hidden');
+      panel.textContent = 'Loading Rockstar logs…';
+      try {
+        const data = await api('steam/rockstar-logs');
+        const lines = [];
+        if (data.diagnosis) {
+          lines.push('=== Diagnosis ===');
+          lines.push(data.diagnosis);
+          lines.push('');
+        }
+        if (data.paths?.stub_log) {
+          lines.push('=== stub.log (PlayGTAV errors) ===');
+          lines.push(data.paths.stub_log);
+          lines.push('');
+          (data.stub_log || []).forEach(l => lines.push(l));
+        }
+        if (data.paths?.launcher_log) {
+          lines.push('');
+          lines.push('=== launcher.log ===');
+          lines.push(data.paths.launcher_log);
+          lines.push('');
+          (data.launcher_log || []).forEach(l => lines.push(l));
+        }
+        if (!lines.length) {
+          lines.push('No Rockstar logs yet — try launching GTA once, then click this again.');
+        }
+        panel.textContent = lines.join('\n');
+        appendLog('Rockstar logs loaded (see Steam tab).');
+      } catch (e) {
+        panel.textContent = 'Could not load Rockstar logs.';
+      }
+    }
+
+    async function steamLaunch(ev) {
+      const btn = ev?.target?.closest?.('button');
+      appendLog('Starting Steam client…');
+      if (btn) btn.disabled = true;
+      try {
+        const data = await post('steam/launch', {}, null);
+        if (data.busy) return;
+        if (data.focused) appendLog('Steam window brought to front.');
+        else if (data.started !== false) appendLog('Steam is starting — first launch can take ~1 minute.');
+        scheduleRefresh();
+      } catch (e) { /* logged */ }
+      finally {
+        if (btn) setTimeout(() => { btn.disabled = false; }, 8000);
+      }
+    }
+
+    async function steamStop(ev) {
+      appendLog('Stopping Steam…');
+      try {
+        await post('steam/stop', {}, ev?.target?.closest?.('button'));
+        scheduleRefresh();
+      } catch (e) { /* logged */ }
+    }
+
+    function steamRun(appId) {
+      appendLog('Starting game via Windows Steam (Wine)…');
+      post('steam/run', { app_id: appId, graphics: document.getElementById('gfx-' + appId)?.value || 'auto' })
+        .then((data) => {
+          if (data?.busy) return;
+          scheduleRefresh();
+        })
+        .catch(() => {});
+    }
+    function saveGfx(appId, name) {
+      post('steam/set-graphics', { app_id: appId, graphics: document.getElementById('gfx-' + appId)?.value || 'dxmt', name })
+        .then(() => refreshSteam(false)).catch(() => {});
+    }
+
+    document.getElementById('steamGames').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const appId = btn.dataset.appid;
+      if (btn.dataset.action === 'play') steamRun(appId);
+      if (btn.dataset.action === 'save-gfx') saveGfx(appId, btn.dataset.name || '');
+    });
+
+    document.getElementById('controllerProfiles').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action="save-ctrl"]');
+      if (!btn) return;
+      saveControllerProfile(btn.dataset.appid, btn.dataset.name || '');
+    });
+
+    function pollTick() {
+      if (!pageVisible) return;
+      refreshLog();
+      refreshSteam(true);
+      refreshController();
+    }
+
+    function schedulePoll() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(pollTick, 5000);
+    }
+
+    refresh();
+    refreshSteam(false);
+    refreshController(true);
+    refreshTune();
+    refreshLog();
+    schedulePoll();
+    setInterval(() => { if (pageVisible) { refresh(); refreshSteam(false); refreshController(true); refreshTune(); } }, 30000);
+    setInterval(() => { if (pageVisible) refreshController(true); }, 8000);
+  </script>
+</body>
+</html>
