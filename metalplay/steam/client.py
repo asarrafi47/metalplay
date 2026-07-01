@@ -26,8 +26,9 @@ from metalplay.controller.compat import controller_env
 from metalplay.controller.profiles import controller_profile_for, steam_launch_args_for_controller
 
 _steam_ui_lock = threading.RLock()
+
 from metalplay.tune.apply import game_resolution_hint, performance_env, should_caffeinate
-from metalplay.tune.power import enable_high_performance, wrap_caffeinate
+from metalplay.tune.power import enable_high_performance, restore_balanced_power, wrap_caffeinate
 from metalplay.steam.install_layout import (
     STEAM_INSTALL_OK_CODES,
     ensure_steam_library,
@@ -228,11 +229,17 @@ def install_winetricks_deps(
     env = _bottle_env(bottle, runtime)
     for pkg in packages or WINETRICKS_PACKAGES:
         _log(f"winetricks {pkg}...", callback)
-        subprocess.run(
+        result = subprocess.run(
             [wt, "-q", pkg],
             env=env,
             timeout=1200,
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip().splitlines()
+            tail = detail[-1] if detail else f"exit {result.returncode}"
+            _log(f"winetricks {pkg} failed: {tail}", callback)
 
 
 def install_client(
@@ -689,8 +696,11 @@ def launch_game(
                 *game_args,
             )
     if should_caffeinate() or env.get("METALPLAY_PERFORMANCE_MODE") == "1":
-        enable_high_performance()
+        enable_high_performance(callback)
         cmd = wrap_caffeinate(cmd)
+        power_boosted = True
+    else:
+        power_boosted = False
 
     _log(f"Starting game via Steam (app {app_id})…", callback)
     if is_rockstar_steam_app(app_id) and not crossover_launch:
@@ -711,7 +721,11 @@ def launch_game(
         if diagnosis:
             _log(diagnosis, callback)
     proc = subprocess.Popen(cmd, env={**os.environ, **env})
-    code = proc.wait()
+    try:
+        code = proc.wait()
+    finally:
+        if power_boosted:
+            restore_balanced_power(callback)
     if crossover_launch:
         from metalplay.compat.crossover import without_crossover_conf
         from metalplay.compat.graphics import restore_steam_client_graphics

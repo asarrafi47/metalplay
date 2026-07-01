@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import secrets
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,14 @@ from metalplay.config import Config
 from metalplay.launcher import run as launcher
 from metalplay.runtime import dxmt
 from metalplay.runtime.installer import install_brew_wine_stable, install_free_runtime, setup_all
-from metalplay.runtime.wine import check_rosetta, detect_installed_runtimes, get_runtime, system_info
+from metalplay.runtime.wine import (
+    WineNotFoundError,
+    check_rosetta,
+    detect_installed_runtimes,
+    get_runtime,
+    require_runtime,
+    system_info,
+)
 from metalplay.steam import (
     STEAM_BOTTLE_NAME,
     launch_game,
@@ -52,6 +60,14 @@ _status_cache = TTLCache[dict](8.0)
 _steam_light_cache = TTLCache[dict](5.0)
 _steam_full_cache = TTLCache[dict](15.0)
 _controller_cache = TTLCache[dict](3.0)
+_api_token: str = ""
+
+
+def _ensure_api_token() -> str:
+    global _api_token
+    if not _api_token:
+        _api_token = secrets.token_urlsafe(24)
+    return _api_token
 
 
 def _log(msg: str) -> None:
@@ -71,6 +87,7 @@ def _status() -> dict:
     return {
         "version": __version__,
         "api_revision": GUI_API_REVISION,
+        "api_token": _ensure_api_token(),
         "macos": info["macos"],
         "arch": info["arch"],
         "rosetta": check_rosetta() if info["arch"] == "arm64" else True,
@@ -217,9 +234,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._api_get(parsed.path)
         return self._serve_static(parsed.path)
 
+    def _check_api_token(self, body: dict) -> bool:
+        if os.environ.get("METALPLAY_GUI_INSECURE") == "1":
+            return True
+        expected = _ensure_api_token()
+        supplied = self.headers.get("X-MetalPlay-Token") or body.get("token", "")
+        return bool(supplied) and secrets.compare_digest(str(supplied), expected)
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         body = self._read_body()
+        if not self._check_api_token(body):
+            self._json({"ok": False, "error": "unauthorized"}, 401)
+            return
         routes = {
             "/api/setup": self._api_setup,
             "/api/install/gcenx": self._api_install_gcenx,
@@ -317,7 +344,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_bottle_create(self, body: dict) -> dict:
         name = body.get("name", "gaming").strip()
-        runtime = get_runtime(Config.load().wine_runtime) or detect_installed_runtimes()[0]
+        runtime = require_runtime(Config.load().wine_runtime)
         _log(f"Creating bottle '{name}'...")
         bottles.create(name, runtime, graphics="dxmt")
         config = Config.load()
@@ -333,13 +360,18 @@ class Handler(BaseHTTPRequestHandler):
         return {"message": f"Deleted '{name}'"}
 
     def _api_launch(self, body: dict) -> dict:
-        exe = body.get("exe", "")
+        exe = body.get("exe", "").strip()
+        if not exe:
+            raise ValueError("No executable path provided")
+        exe_path = Path(exe).expanduser()
+        if not exe_path.is_file():
+            raise FileNotFoundError(f"Executable not found: {exe}")
         bottle_name = body.get("bottle", "")
         graphics = body.get("graphics", "dxmt")
-        runtime = get_runtime(Config.load().wine_runtime) or detect_installed_runtimes()[0]
+        runtime = require_runtime(Config.load().wine_runtime)
         bottle = bottles.bottle_path(bottle_name)
-        _log(f"Launching {Path(exe).name}...")
-        code = launcher.launch(runtime, bottle, exe, config=Config.load(), graphics=graphics)
+        _log(f"Launching {exe_path.name}...")
+        code = launcher.launch(runtime, bottle, str(exe_path), config=Config.load(), graphics=graphics)
         _log(f"Exited with code {code}")
         return {"code": code}
 
@@ -572,7 +604,10 @@ def _stop_stale_gui_servers() -> None:
     import subprocess
     import time
 
-    subprocess.run(["pkill", "-f", "metalplay gui"], capture_output=True)
+    subprocess.run(
+        ["pkill", "-f", r"metalplay gui|metalplay-gui|metalplay\.gui"],
+        capture_output=True,
+    )
     time.sleep(1.5)
 
 

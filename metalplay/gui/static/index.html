@@ -139,6 +139,7 @@
     let logLineCount = 0;
     let pollTimer = null;
     let refreshPending = null;
+    let apiToken = null;
     let steamFullLoaded = false;
     let pageVisible = !document.hidden;
     let steamGamesCache = [];
@@ -194,6 +195,7 @@
 
     async function refresh() {
       const s = await api('status');
+      if (s.api_token) apiToken = s.api_token;
       const pill = document.getElementById('versionPill');
       if (pill) pill.textContent = 'v' + (s.version || '?');
       const rosettaOk = s.rosetta;
@@ -437,7 +439,10 @@
         try {
           r = await fetch('/api/' + action, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              ...(apiToken ? {'X-MetalPlay-Token': apiToken} : {}),
+            },
             body: JSON.stringify(body),
           });
         } catch (netErr) {

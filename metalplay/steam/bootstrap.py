@@ -13,6 +13,7 @@ ProgressCallback = Callable[[str], None]
 
 # Full client is hundreds of MB; stub-only install is ~10MB.
 _MIN_COMPLETE_BYTES = 80 * 1024 * 1024
+_BOOTSTRAP_MARKER = ".metalplay-bootstrap-ok"
 
 
 def _log(msg: str, callback: ProgressCallback | None = None) -> None:
@@ -48,17 +49,30 @@ def is_bootstrap_complete(root: Path) -> bool:
     """True when the full Steam client (not just the NSIS stub) is present."""
     if not steam_exe_path(root):
         return False
+    marker = root / _BOOTSTRAP_MARKER
+    if marker.is_file():
+        return (root / "bin" / "cef").is_dir() and (
+            (root / "SteamUI.dll").is_file()
+            or (root / "steamui.dll").is_file()
+            or (root / "clientui").is_dir()
+        )
     try:
         total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
     except OSError:
         total = 0
     if total < _MIN_COMPLETE_BYTES:
         return False
-    return (root / "bin" / "cef").is_dir() and (
+    complete = (root / "bin" / "cef").is_dir() and (
         (root / "SteamUI.dll").is_file()
         or (root / "steamui.dll").is_file()
         or (root / "clientui").is_dir()
     )
+    if complete:
+        try:
+            (root / _BOOTSTRAP_MARKER).write_text("ok\n")
+        except OSError:
+            pass
+    return complete
 
 
 def bootstrap_log_tail(root: Path, n: int = 8) -> str:

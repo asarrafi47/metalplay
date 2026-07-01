@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from pathlib import Path
 from metalplay import paths
 from metalplay.runtime.dxmt import install_into_bottle
 from metalplay.runtime.wine import WineRuntime, wine_command
+
+_BOTTLE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 
 @dataclass
@@ -26,6 +29,24 @@ class BottleMeta:
 
 class BottleError(RuntimeError):
     pass
+
+
+def validate_bottle_name(name: str) -> str:
+    """Reject empty, traversal, or weird names before any filesystem ops."""
+    name = name.strip()
+    if not name:
+        raise BottleError("Bottle name cannot be empty")
+    if name in {".", ".."} or "/" in name or "\\" in name:
+        raise BottleError(f"Invalid bottle name: {name!r}")
+    if not _BOTTLE_NAME_RE.match(name):
+        raise BottleError(
+            "Invalid bottle name — use 1–64 chars: letters, digits, . _ -",
+        )
+    root = paths.bottles_dir().resolve()
+    resolved = (root / name).resolve()
+    if resolved == root or root not in resolved.parents:
+        raise BottleError(f"Invalid bottle name: {name!r}")
+    return name
 
 
 def _meta_path(bottle_path: Path) -> Path:
@@ -47,7 +68,7 @@ def list_bottles() -> list[tuple[str, Path, BottleMeta | None]]:
 
 
 def bottle_path(name: str) -> Path:
-    return paths.bottles_dir() / name
+    return paths.bottles_dir() / validate_bottle_name(name)
 
 
 def load_meta(bottle: Path) -> BottleMeta | None:
@@ -76,6 +97,7 @@ def create(
     install_dxmt: bool | None = None,
 ) -> Path:
     """Create a new Wine bottle configured for Metal gaming."""
+    validate_bottle_name(name)
     dest = bottle_path(name)
     if dest.exists():
         raise BottleError(f"Bottle '{name}' already exists at {dest}")

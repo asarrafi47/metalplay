@@ -38,7 +38,19 @@ class Config:
                 extra_env=data.get("extra_env", {}),
                 game_profiles=data.get("game_profiles", {}),
             )
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            backup = config_path.with_suffix(".json.bak")
+            try:
+                backup.write_text(config_path.read_text())
+            except OSError:
+                pass
+            import sys
+
+            print(
+                f"Warning: corrupt config at {config_path} ({exc}); "
+                f"using defaults (backup: {backup})",
+                file=sys.stderr,
+            )
             return cls()
 
     def save(self) -> None:

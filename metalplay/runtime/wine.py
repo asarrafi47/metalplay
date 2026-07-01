@@ -76,18 +76,17 @@ def _find_wine_in_tree(root: Path) -> Path | None:
     return None
 
 
+class WineNotFoundError(RuntimeError):
+    """No usable Wine runtime is installed."""
+
+
 def _runtime_from_wine(name: str, wine_bin: Path, source: str) -> WineRuntime | None:
     if not wine_bin.is_file():
         return None
     root = wine_bin.parent.parent
     wine_lib = root / "lib" / "wine"
     if not wine_lib.is_dir():
-        # CrossOver layout: SharedSupport/CrossOver/lib/wine
-        alt_lib = root / "lib" / "wine"
-        if alt_lib.is_dir():
-            wine_lib = alt_lib
-        else:
-            return None
+        return None
     wineserver = wine_bin.parent / "wineserver"
     return WineRuntime(
         name=name,
@@ -154,6 +153,16 @@ def get_runtime(name_or_path: str | None = None) -> WineRuntime | None:
         if wine_bin:
             return _runtime_from_wine(candidate.name, wine_bin, "custom")
     return None
+
+
+def require_runtime(name_or_path: str | None = None) -> WineRuntime:
+    """Return a Wine runtime or raise with an actionable error."""
+    runtime = get_runtime(name_or_path)
+    if runtime is not None:
+        return runtime
+    raise WineNotFoundError(
+        "No Wine runtime found. Install one with: metalplay install wine",
+    )
 
 
 def register_runtime(wine_root: Path) -> WineRuntime:

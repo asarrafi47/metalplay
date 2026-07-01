@@ -12,7 +12,7 @@ from metalplay.controller.compat import controller_env
 from metalplay.controller.profiles import controller_profile_for
 from metalplay.runtime.wine import WineRuntime, check_rosetta, wine_command
 from metalplay.tune.apply import performance_env, should_caffeinate
-from metalplay.tune.power import wrap_caffeinate
+from metalplay.tune.power import restore_balanced_power, wrap_caffeinate
 
 
 def build_env(
@@ -112,9 +112,18 @@ def launch(
     if use_rosetta and platform.machine() == "arm64" and not check_rosetta():
         print("Warning: Rosetta 2 may be required for x86_64 Wine builds.")
     cmd = wine_cmd
+    power_boosted = False
     if should_caffeinate() or os.environ.get("METALPLAY_PERFORMANCE_MODE") == "1":
+        from metalplay.tune.power import enable_high_performance
+
+        enable_high_performance()
         cmd = wrap_caffeinate(cmd)
+        power_boosted = True
 
     work_dir = str(cwd) if cwd else None
-    result = subprocess.run(cmd, env={**os.environ, **env}, cwd=work_dir)
-    return result.returncode
+    try:
+        result = subprocess.run(cmd, env={**os.environ, **env}, cwd=work_dir)
+        return result.returncode
+    finally:
+        if power_boosted:
+            restore_balanced_power()
