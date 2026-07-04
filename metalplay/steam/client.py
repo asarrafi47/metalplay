@@ -826,10 +826,12 @@ def _launch_source_crossover(
         apply_crossover_display_fix,
         crossover_env,
         crossover_runtime,
+        crossover_session_active,
         cxstart_command,
         ensure_bottle_registered,
     )
     from metalplay.compat.process import (
+        activate_app_by_pid,
         activate_game_when_up,
         focus_steam_window,
         is_steam_running,
@@ -849,26 +851,45 @@ def _launch_source_crossover(
 
     ensure_bottle_registered(bottle)
 
+    # Reuse a live CrossOver Steam session — hard restarts invalidate Steam's
+    # remembered login and force the user back to the sign-in screen.
     gcenx = get_runtime()
-    if is_steam_running():
+    cx_session = crossover_session_active()
+    steam_up = is_steam_running()
+    if steam_up and not cx_session:
         _log(
             "Source + CrossOver: restarting Steam under CrossOver "
             "(the runtimes cannot share the bottle's wineserver)",
             callback,
         )
         stop_steam_client(gcenx, bottle)
-    kill_wineserver(gcenx.wineserver_bin, bottle)
+        steam_up = False
+    if not cx_session:
+        kill_wineserver(gcenx.wineserver_bin, bottle)
 
     env = crossover_env(dict(os.environ))
     env["WINEPREFIX"] = str(bottle)
     env.update(performance_env(config))
     apply_crossover_display_fix(bottle, env, exe_names=game_compat.exe_names)
 
-    subprocess.Popen(
-        wine_command(cx.wine_bin, str(exe), "-no-cef-sandbox", "-noverifyfiles"),
-        env=env,
-    )
+    if not steam_up:
+        subprocess.Popen(
+            wine_command(cx.wine_bin, str(exe), "-no-cef-sandbox", "-noverifyfiles"),
+            env=env,
+        )
     if not wait_for_steam_login(cx.wine_bin, bottle, env, callback=callback):
+        # Bring the Sign-in window forward. NSRunningApplication activation
+        # works without the accessibility permission focus_steam_window needs.
+        try:
+            pids = subprocess.run(
+                ["pgrep", "-f", "steamwebhelper"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.split()
+            for pid in pids:
+                if pid.isdigit():
+                    activate_app_by_pid(int(pid))
+        except (OSError, subprocess.SubprocessError):
+            pass
         focus_steam_window()
         _log(
             "Not signed in to Steam — sign in to the Steam window, "
@@ -904,10 +925,9 @@ def _launch_source_crossover(
     finally:
         if power_boosted:
             restore_balanced_power(callback)
-        # Return the bottle to the Gcenx runtime so GUI/CLI operations (which
-        # spawn Gcenx wine) don't collide with a live CrossOver wineserver.
-        stop_steam_client(cx, bottle)
-        kill_wineserver(cx.wineserver_bin, bottle)
+    # The CrossOver Steam session stays up on purpose: hard-stopping Steam
+    # invalidates its remembered login, and relaunches reuse the session.
+    # Gcenx-side launches already restart Steam under their own wineserver.
     return code
 
 

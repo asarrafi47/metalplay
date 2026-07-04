@@ -34,7 +34,9 @@ _GMOD_CEF_FLAGS = (
 
 def _gmod_launch_options() -> str:
     # +map gm_construct: skip HTML main-menu workshop promos when possible.
-    return _windowed_launch_options() + " +mat_queue_mode 0 +map gm_construct"
+    # mat_queue_mode 2: multicore material system — the single-threaded 0 was a
+    # (disproven) crash mitigation and costs a lot of FPS on many-core machines.
+    return _windowed_launch_options() + " +mat_queue_mode 2 +map gm_construct"
 
 
 def _parse_resolution(spec: str) -> tuple[int, int] | None:
@@ -72,7 +74,7 @@ def _windowed_launch_options() -> str:
     w, h = _game_window_size()
     return f"-windowed -noborder -w {w} -h {h} -nopreload -novid"
 
-_SOURCE_OPTIONS = _windowed_launch_options() + " +mat_queue_mode 0"
+_SOURCE_OPTIONS = _windowed_launch_options() + " +mat_queue_mode 2"
 
 _GMOD_DLL_OVERRIDES = (
     "d3d9=b;d3d11=b;d3d10core=b;dxgi=b;winemetal=d;"

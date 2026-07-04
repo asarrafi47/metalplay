@@ -163,6 +163,21 @@ def apply_crossover_display_fix(
         )
 
 
+def crossover_session_active() -> bool:
+    """True if a CrossOver wineserver is currently serving the prefix."""
+    try:
+        return (
+            subprocess.run(
+                ["pgrep", "-f", r"CrossOver[/.].*wineserver|SharedSupport/CrossOver/bin/wineserver"],
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def cxstart_command(
     exe: Path,
     args: list[str],
