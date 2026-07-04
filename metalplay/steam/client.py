@@ -343,11 +343,20 @@ def steam_env(
                 "d3d9=b;d3d11=b;d3d10core=b;dxgi=b;winemetal=d;winemenubuilder.exe=d"
             )
             env.pop("WINEDLLPATH_PREPEND", None)
+        elif graphics == "dxvk":
+            env["WINEDLLOVERRIDES"] = (
+                "d3d11,dxgi,d3d10core=n;vulkan-1=b;winemetal=d;winemenubuilder.exe=d"
+            )
+            env["DXVK_LOG_LEVEL"] = config.extra_env.get("DXVK_LOG_LEVEL", "error")
+            env["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1"
+            env.pop("WINEDLLPATH_PREPEND", None)
         elif graphics == "moltenvk":
             env["WINEDLLOVERRIDES"] = (
-                "d3d12=n,b;d3d11=n,b;dxgi=n,b;vulkan-1=n,b;"
+                "d3d12=n,b;d3d11=n,b;dxgi=n,b;vulkan-1=b;"
                 "winemenubuilder.exe=d"
             )
+            env["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1"
+            env["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1"
         else:
             dxmt_root = paths.dxmt_dir()
             if dxmt_root.is_dir():
@@ -582,6 +591,22 @@ def launch_game(
     crossover_launch = is_rockstar_steam_app(app_id) and crossover_runtime() is not None
     launch_runtime = crossover_runtime() if crossover_launch else runtime
 
+    # Source/D3D9 titles: the free runtime's 32-bit wined3d→GL crashes during
+    # device init on Apple GL, so route them through CrossOver when available.
+    source_cx = False
+    if gfx == "wined3d" and not crossover_launch:
+        from metalplay.compat.crossover import crossover_runtime, cxstart_bin
+
+        pre_compat = compat_profile(app_id, install_path=install_path)
+        source_cx = (
+            pre_compat is not None
+            and pre_compat.graphics == "wined3d"
+            and install_path is not None
+            and source_launch_exe(install_path, pre_compat) is not None
+            and crossover_runtime() is not None
+            and cxstart_bin() is not None
+        )
+
     if is_rockstar_steam_app(app_id):
         from metalplay.compat.rockstar import prepare_launcher_graphics
 
@@ -606,7 +631,9 @@ def launch_game(
                 stop_steam_client(reg_runtime, bottle)
             kill_wineserver(reg_runtime.wineserver_bin, bottle)
         restore_steam_client_graphics(launch_runtime.root, bottle)
-    else:
+    elif not source_cx:
+        # CrossOver Source launches start Steam under CrossOver's own wineserver
+        # instead (in _launch_source_crossover) — don't boot the Gcenx one here.
         ensure_steam_ui(runtime, bottle, config, callback=callback)
 
     bottle_env = {
@@ -627,6 +654,17 @@ def launch_game(
             env=bottle_env,
             callback=callback,
         )
+
+    if gfx == "dxvk" and not crossover_launch:
+        from metalplay.compat.graphics import swap_bottle_to_dxvk
+
+        try:
+            swapped = swap_bottle_to_dxvk(bottle)
+            if swapped:
+                _log(f"DXVK: placed {len(swapped)} graphics DLL(s) in bottle", callback)
+        except Exception as exc:
+            _log(f"DXVK unavailable ({exc}) — falling back to dxmt", callback)
+            gfx = "dxmt"
 
     env = steam_env(config, gfx, for_client=False, app_id=app_id)
     if crossover_launch:
@@ -675,6 +713,29 @@ def launch_game(
             else None
         )
         if direct_exe:
+            if source_cx:
+                return _launch_source_crossover(
+                    bottle,
+                    direct_exe,
+                    source_launch_argv(game_compat),
+                    game_compat,
+                    config,
+                    callback=callback,
+                )
+            from metalplay.compat.process import focus_steam_window, wait_for_steam_login
+
+            if not wait_for_steam_login(
+                launch_runtime.wine_bin, bottle, bottle_env, callback=callback,
+            ):
+                # Launching without a logged-in user is a guaranteed Sys_Error
+                # ("No SteamUser") — a crash dump and an error dialog, nothing else.
+                focus_steam_window()
+                _log(
+                    "Not signed in to Steam — sign in to the Steam window, "
+                    "then run this launch again.",
+                    callback,
+                )
+                return 3
             launch_argv = source_launch_argv(game_compat)
             _log(
                 f"Direct Source launch: {direct_exe.name} {' '.join(launch_argv)}",
@@ -743,6 +804,113 @@ def launch_game(
     return code
 
 
+def _launch_source_crossover(
+    bottle: Path,
+    direct_exe: Path,
+    launch_argv: list[str],
+    game_compat,
+    config: Config,
+    callback: ProgressCallback | None = None,
+) -> int:
+    """
+    Launch a Source game (with its Steam session) under CrossOver's Wine.
+
+    The free runtime's 32-bit wined3d→GL path access-violates during D3D9
+    device init on Apple GL, and the free alternatives are dead ends there:
+    DXVK's d3d9 needs geometry shaders MoltenVK cannot offer, and wined3d's
+    Vulkan renderer cannot compile SM3 shaders. CrossOver's patched wined3d
+    runs these titles. The whole session (Steam + game) moves to CrossOver
+    because two Wine builds cannot share the bottle's wineserver.
+    """
+    from metalplay.compat.crossover import (
+        apply_crossover_display_fix,
+        crossover_env,
+        crossover_runtime,
+        cxstart_command,
+        ensure_bottle_registered,
+    )
+    from metalplay.compat.process import (
+        activate_game_when_up,
+        focus_steam_window,
+        is_steam_running,
+        kill_wineserver,
+        stop_steam_client,
+        wait_for_steam_login,
+    )
+    from metalplay.runtime.wine import get_runtime
+
+    cx = crossover_runtime()
+    cmd = cxstart_command(direct_exe, launch_argv)
+    if cx is None or cmd is None:
+        raise FileNotFoundError("CrossOver runtime unavailable")
+    exe = steam_exe(bottle)
+    if not exe:
+        raise FileNotFoundError("Steam not installed")
+
+    ensure_bottle_registered(bottle)
+
+    gcenx = get_runtime()
+    if is_steam_running():
+        _log(
+            "Source + CrossOver: restarting Steam under CrossOver "
+            "(the runtimes cannot share the bottle's wineserver)",
+            callback,
+        )
+        stop_steam_client(gcenx, bottle)
+    kill_wineserver(gcenx.wineserver_bin, bottle)
+
+    env = crossover_env(dict(os.environ))
+    env["WINEPREFIX"] = str(bottle)
+    env.update(performance_env(config))
+    apply_crossover_display_fix(bottle, env, exe_names=game_compat.exe_names)
+
+    subprocess.Popen(
+        wine_command(cx.wine_bin, str(exe), "-no-cef-sandbox", "-noverifyfiles"),
+        env=env,
+    )
+    if not wait_for_steam_login(cx.wine_bin, bottle, env, callback=callback):
+        focus_steam_window()
+        _log(
+            "Not signed in to Steam — sign in to the Steam window, "
+            "then run this launch again.",
+            callback,
+        )
+        return 3
+
+    if should_caffeinate() or env.get("METALPLAY_PERFORMANCE_MODE") == "1":
+        enable_high_performance(callback)
+        cmd = wrap_caffeinate(cmd)
+        power_boosted = True
+    else:
+        power_boosted = False
+
+    # CrossOver re-stamps Retina/DPI settings when its session boots the
+    # desktop (the Steam start above) — re-assert 1:1 right before the game.
+    apply_crossover_display_fix(bottle, env, exe_names=game_compat.exe_names)
+
+    _log(
+        f"Direct Source launch (CrossOver): {direct_exe.name} {' '.join(launch_argv)}",
+        callback,
+    )
+    # cxstart maps the window when it brings up the CrossOver-Hosted app, but
+    # relaunches into an already-running host leave it unmapped/minimized —
+    # keep activating the game app while it boots.
+    threading.Thread(
+        target=activate_game_when_up, args=(direct_exe.name,), daemon=True
+    ).start()
+    proc = subprocess.Popen(cmd, env=env)
+    try:
+        code = proc.wait()
+    finally:
+        if power_boosted:
+            restore_balanced_power(callback)
+        # Return the bottle to the Gcenx runtime so GUI/CLI operations (which
+        # spawn Gcenx wine) don't collide with a live CrossOver wineserver.
+        stop_steam_client(cx, bottle)
+        kill_wineserver(cx.wineserver_bin, bottle)
+    return code
+
+
 def launch_game_direct(
     runtime: WineRuntime,
     bottle: Path,
@@ -753,6 +921,8 @@ def launch_game_direct(
     """Launch a game executable directly (bypasses Steam UI, game must be installed)."""
     config = config or Config.load()
     app_id = str(app_id)
+    from metalplay.steam.library import list_games
+
     games = list_games(bottle)
     game = next((g for g in games if g.app_id == app_id), None)
     if not game or not game.exe_path:

@@ -13,7 +13,7 @@ DXMT_RELEASE_URL = (
 )
 
 # Graphics backends that route DirectX to Apple Metal
-GRAPHICS_BACKENDS = ("dxmt", "moltenvk", "wined3d", "auto")
+GRAPHICS_BACKENDS = ("dxmt", "dxvk", "moltenvk", "wined3d", "auto")
 
 # Known Wine installation locations on macOS
 WINE_SEARCH_PATHS: tuple[tuple[str, Path], ...] = (

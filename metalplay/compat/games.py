@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -32,18 +33,39 @@ _GMOD_CEF_FLAGS = (
 )
 
 def _gmod_launch_options() -> str:
-    # -gl: OpenGL renderer (more stable than D3D9 under Wine on Mac).
     # +map gm_construct: skip HTML main-menu workshop promos when possible.
-    return _windowed_launch_options() + " -gl +mat_queue_mode 0 +map gm_construct"
+    return _windowed_launch_options() + " +mat_queue_mode 0 +map gm_construct"
+
+
+def _parse_resolution(spec: str) -> tuple[int, int] | None:
+    match = re.match(r"^\s*(\d{3,5})\s*[xX]\s*(\d{3,5})\s*$", spec or "")
+    if not match:
+        return None
+    w, h = int(match.group(1)), int(match.group(2))
+    if w < 640 or h < 480:
+        return None
+    return w, h
 
 
 def _game_window_size() -> tuple[int, int]:
+    """
+    Borderless game window size.
+
+    METALPLAY_GAME_RESOLUTION (env, then config extra_env) wins; otherwise fill the
+    logical desktop so -noborder behaves like fullscreen instead of a small window.
+    """
+    from metalplay.config import Config
     from metalplay.tune.detect import _primary_screen_geometry
 
+    for spec in (
+        os.environ.get("METALPLAY_GAME_RESOLUTION"),
+        Config.load().extra_env.get("METALPLAY_GAME_RESOLUTION"),
+    ):
+        size = _parse_resolution(spec or "")
+        if size:
+            return size
     lw, lh, _ = _primary_screen_geometry()
-    w = min(1280, max(800, lw))
-    h = min(720, max(600, lh))
-    return w, h
+    return max(800, lw), max(600, lh)
 
 
 def _windowed_launch_options() -> str:
@@ -54,7 +76,7 @@ _SOURCE_OPTIONS = _windowed_launch_options() + " +mat_queue_mode 0"
 
 _GMOD_DLL_OVERRIDES = (
     "d3d9=b;d3d11=b;d3d10core=b;dxgi=b;winemetal=d;"
-    "dwrite=b;dinput8,n,b;xinput1_3,n,b;"
+    "dwrite=b;dinput8=n,b;xinput1_3=n,b;"
     "gameoverlayrenderer,gameoverlayrenderer64=d"
 )
 
@@ -140,9 +162,13 @@ def resolve_graphics(
     """Pick graphics backend (never DXMT for Source/DX9 titles)."""
     profile_cfg = config_profile or {}
     gfx = requested or profile_cfg.get("graphics", "auto")
+    known = compat_profile(app_id, install_path=install_path)
+    if known and known.graphics == "wined3d" and gfx in ("auto", "dxmt"):
+        # DXMT has no D3D9: a stale config entry or GUI default of "dxmt" for a
+        # Source title crashes at device init. Explicit dxvk/moltenvk stay honored.
+        return "wined3d"
     if gfx and gfx != "auto":
         return gfx
-    known = compat_profile(app_id, install_path=install_path)
     if known:
         return known.graphics
     return "dxmt"
@@ -322,10 +348,9 @@ def write_source_autoexec_cfg(install_path: Path, callback: ProgressCallback = N
         f"cl_disablehtmlmotd 1\n"
     )
     mp_cfg = cfg_dir / "metalplay.cfg"
-    if not mp_cfg.is_file() or marker not in mp_cfg.read_text():
-        mp_cfg.write_text(snippet)
-        changed = True
-    elif html_marker not in mp_cfg.read_text():
+    # Exact-content compare: a stale copy with an old resolution would force the
+    # window back to that size on every launch.
+    if not mp_cfg.is_file() or mp_cfg.read_text() != snippet:
         mp_cfg.write_text(snippet)
         changed = True
     else:
@@ -593,7 +618,7 @@ def game_env_overrides(profile: GameCompatProfile) -> dict[str, str]:
             "WINEDLLOVERRIDES": profile.dll_overrides,
             "WINE_DISABLE_OPENGL": "0",
         }
-    elif profile.graphics == "moltenvk":
+    elif profile.graphics in ("moltenvk", "dxvk"):
         base = {
             "WINEDLLOVERRIDES": profile.dll_overrides,
         }

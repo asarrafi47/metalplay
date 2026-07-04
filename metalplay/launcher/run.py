@@ -36,10 +36,12 @@ def build_env(
     # Graphics backend → Metal translation layer
     if graphics in ("dxmt", "auto"):
         env.update(_dxmt_env(config, profile))
+    elif graphics == "dxvk":
+        env.update(_dxvk_env(profile))
     elif graphics == "moltenvk":
         env.update(_moltenvk_env(profile))
     elif graphics == "wined3d":
-        env["WINEDLLOVERRIDES"] = "d3d11,b;d3d10core,b;dxgi,b"
+        env["WINEDLLOVERRIDES"] = "d3d9,d3d11,d3d10core,dxgi=b;winemetal=d"
 
     # Merge profile and user overrides
     env.update(performance_env(config))
@@ -68,18 +70,49 @@ def _dxmt_env(config: Config, profile: dict) -> dict[str, str]:
     return env
 
 
+_MOLTENVK_ICD_PATHS = (
+    "/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json",
+    "/opt/homebrew/share/vulkan/icd.d/MoltenVK_icd.json",
+    "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json",
+)
+
+
 def _moltenvk_env(profile: dict) -> dict[str, str]:
-    """Environment for D3D12 via vkd3d → MoltenVK → Metal."""
+    """Environment for D3D12 via Wine's vkd3d → winevulkan → MoltenVK → Metal."""
+    env = {
+        "WINEDLLOVERRIDES": profile.get(
+            "dll_overrides",
+            "d3d12=n,b;d3d11=n,b;dxgi=n,b;vulkan-1=b;",
+        ),
+        "MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS": "1",
+        "MVK_CONFIG_RESUME_LOST_DEVICE": "1",
+    }
+    # Only point the loader at an ICD that actually exists. Without one,
+    # CrossOver-lineage winevulkan loads the runtime's bundled libMoltenVK directly —
+    # a dangling VK_ICD_FILENAMES breaks Vulkan entirely.
+    icd = profile.get("vk_icd")
+    if not icd:
+        icd = next((p for p in _MOLTENVK_ICD_PATHS if Path(p).is_file()), None)
+    if icd:
+        env["VK_ICD_FILENAMES"] = str(icd)
+    return env
+
+
+def _dxvk_env(profile: dict) -> dict[str, str]:
+    """
+    Environment for DXVK — D3D10/11 → Vulkan → MoltenVK → Metal.
+
+    Alternative to DXMT for titles DXMT does not handle yet. Requires the bottle
+    to carry DXVK d3d11/d3d10core (see swap_bottle_to_dxvk).
+    """
     return {
         "WINEDLLOVERRIDES": profile.get(
             "dll_overrides",
-            "d3d12=n,b;d3d11=n,b;dxgi=n,b;vulkan-1=n,b;",
+            "d3d11,dxgi,d3d10core=n;vulkan-1=b;winemetal=d",
         ),
-        "VK_ICD_FILENAMES": profile.get(
-            "vk_icd",
-            "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json",
-        ),
-        "MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS": "1",
+        "DXVK_LOG_LEVEL": profile.get("dxvk_log_level", "error"),
+        "MVK_CONFIG_RESUME_LOST_DEVICE": "1",
+        "MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE": "1",
     }
 
 
@@ -98,6 +131,15 @@ def launch(
     """Launch a Windows game through Wine with Metal graphics."""
     config = config or Config.load()
     profile = config.get_game_profile(game_name) if game_name else {}
+    gfx = graphics or config.default_graphics
+    if gfx == "dxvk":
+        from metalplay.compat.graphics import swap_bottle_to_dxvk
+
+        try:
+            swap_bottle_to_dxvk(bottle)
+        except Exception as exc:
+            print(f"Warning: DXVK unavailable ({exc}) — falling back to DXMT.")
+            graphics = "dxmt"
     env = build_env(
         runtime, bottle, config, graphics=graphics, game_profile=profile, app_id=game_name,
     )

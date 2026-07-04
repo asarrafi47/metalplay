@@ -120,6 +120,7 @@
             <label>Graphics backend</label>
             <select id="graphics">
               <option value="dxmt">dxmt — D3D11 → Metal (fastest)</option>
+              <option value="dxvk">dxvk — D3D11 → Vulkan → Metal</option>
               <option value="moltenvk">moltenvk — D3D12 → Metal</option>
               <option value="wined3d">wined3d — legacy OpenGL</option>
             </select>
@@ -314,6 +315,7 @@
             </div>
             <select id="gfx-${g.app_id}" style="width:auto;margin:0;padding:4px 8px;font-size:0.75rem">
               <option value="dxmt" ${g.graphics==='dxmt'?'selected':''}>D3D11→Metal</option>
+              <option value="dxvk" ${g.graphics==='dxvk'?'selected':''}>D3D11→Vulkan→Metal</option>
               <option value="moltenvk" ${g.graphics==='moltenvk'?'selected':''}>D3D12→Metal</option>
               <option value="auto" ${g.graphics==='auto'?'selected':''}>auto</option>
             </select>

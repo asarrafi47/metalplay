@@ -143,9 +143,17 @@ In the GUI (`metalplay gui`), open the **Steam** tab for setup, library browsing
 | Backend | Path to Metal | Best For |
 |---------|---------------|----------|
 | **dxmt** (default) | D3D10/11 → Metal directly | Most modern games (Skyrim, Palworld, etc.) |
-| **moltenvk** | D3D12 → Vulkan → Metal | D3D12-only titles |
-| **wined3d** | D3D → OpenGL | Legacy DirectX 9 games |
+| **dxvk** | D3D10/11 → Vulkan → MoltenVK → Metal | D3D11 titles DXMT can't handle yet (auto-downloaded on first use) |
+| **moltenvk** | D3D12 → vkd3d → Vulkan → Metal | D3D12-only titles |
+| **wined3d** | D3D9 → OpenGL | Legacy DirectX 9 games (Source engine, etc.) |
 | **auto** | Same as dxmt | Default behavior |
+
+Source/D3D9 titles launch through CrossOver's Wine automatically when CrossOver is
+installed — the free runtime's 32-bit wined3d→GL path crashes during D3D9 device
+init on Apple GL, and no free translation layer covers D3D9 on Metal today (DXVK's
+d3d9 needs geometry shaders MoltenVK can't offer; wined3d's Vulkan renderer can't
+compile SM3 shaders). MetalPlay handles the CrossOver session end to end: bottle
+registration, Retina/DPI 1:1 fixes, and launching via `cxstart`.
 
 ## Wine Runtime Options
 

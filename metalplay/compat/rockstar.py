@@ -68,12 +68,13 @@ _ROCKSTAR_GAME_EXES: tuple[str, ...] = (
     "rdr2.exe",
 )
 
-# Load swapped bottle wined3d DLLs (n,b). Builtin (b) alone pulls DXMT from the Wine tree
-# and DXGI/D3D11 then require winemetal.dll — CEF dies at "Initializing group 1".
-# Load swapped bottle wined3d DLLs (n only — n,b falls back to DXMT builtins).
+# Load swapped bottle DLLs (n only — n,b falls back to DXMT builtins, and DXGI/D3D11
+# then require winemetal.dll — CEF dies at "Initializing group 1").
+# d3d11/d3d10core in the bottle are DXVK (Vulkan/MoltenVK) with a wined3d fallback;
+# vulkan-1 stays builtin so DXVK can reach winevulkan + libMoltenVK.
 _LAUNCHER_D3D_NATIVE = ("d3d11", "dxgi", "d3d10core", "d3d10_1")
-_LAUNCHER_D3D_BUILTIN = ("d2d1", "dwrite")
-_LAUNCHER_D3D_DISABLED = ("winemetal", "d3d12", "vulkan-1")
+_LAUNCHER_D3D_BUILTIN = ("d2d1", "dwrite", "vulkan-1")
+_LAUNCHER_D3D_DISABLED = ("winemetal", "d3d12")
 _D3D_DXMT = ("d3d11", "dxgi", "d3d10core", "d3d12", "vulkan-1", "winemetal")
 
 
@@ -121,7 +122,8 @@ def apply_compat(
     from metalplay.compat.crossover import without_crossover_conf
     from metalplay.compat.process import kill_wineserver
 
-    marker = bottle / ".metalplay/rockstar_compat.ok"
+    # v2: vulkan-1 builtin for DXVK launcher graphics (was disabled)
+    marker = bottle / ".metalplay/rockstar_compat.v2.ok"
     if marker.is_file():
         return
 
@@ -341,15 +343,26 @@ def prepare_launcher_graphics(
         if _disable_social_club_cef_dll(sc, dll) and callback:
             callback(f"Rockstar: disabled Social Club {dll}")
 
-    try:
-        swapped = swap_bottle_to_wined3d(bottle)
-    except FileNotFoundError as exc:
-        if callback:
-            callback(f"Rockstar: wined3d swap skipped ({exc})")
-        swapped = []
+    from metalplay.compat.graphics import swap_bottle_to_dxvk
 
-    if swapped and callback:
-        callback(f"Rockstar: swapped {len(swapped)} graphics DLL(s) to wined3d for launcher")
+    try:
+        swapped = swap_bottle_to_dxvk(bottle)
+        if swapped and callback:
+            callback(
+                f"Rockstar: launcher graphics → DXVK over MoltenVK "
+                f"({len(swapped)} DLL(s))"
+            )
+    except Exception as exc:  # download/extract failure — keep the old wined3d path
+        if callback:
+            callback(f"Rockstar: DXVK unavailable ({exc}) — falling back to wined3d")
+        try:
+            swapped = swap_bottle_to_wined3d(bottle)
+        except FileNotFoundError as exc2:
+            if callback:
+                callback(f"Rockstar: wined3d swap skipped ({exc2})")
+            swapped = []
+        if swapped and callback:
+            callback(f"Rockstar: swapped {len(swapped)} graphics DLL(s) to wined3d for launcher")
 
     windows = bottle / "drive_c/windows"
     for sub in ("system32", "syswow64"):
@@ -430,19 +443,21 @@ def rockstar_game_env(base: dict[str, str]) -> dict[str, str]:
     """
     env = dict(base)
     env.pop("WINE_DISABLE_OPENGL", None)
-    # Launcher/CEF: wined3d builtins in bottle, no DXMT winemetal.
+    # Launcher/CEF: DXVK d3d11 (bottle copy) over builtin vulkan-1 → MoltenVK.
     # Game: DXMT from prepend (native) when gta5_enhanced.exe starts.
     overrides = (
         "d3d11,dxgi,d3d10core,d3d10_1=n;"
-        "d2d1,dwrite=b;"
-        "d3d12,vulkan-1,winemetal=d;"
+        "d2d1,dwrite,vulkan-1=b;"
+        "d3d12,winemetal=d;"
         "winemenubuilder.exe=d;"
         "gameoverlayrenderer,gameoverlayrenderer64=d;"
         "ucrtbase=b"
     )
     existing = env.get("WINEDLLOVERRIDES", "")
     env["WINEDLLOVERRIDES"] = f"{existing};{overrides}" if existing else overrides
-    env.setdefault("VK_ICD_FILENAMES", "")
+    env.setdefault("DXVK_LOG_LEVEL", "error")
+    env.setdefault("MVK_CONFIG_RESUME_LOST_DEVICE", "1")
+    env.setdefault("MVK_CONFIG_FULL_IMAGE_VIEW_SWIZZLE", "1")
     env.setdefault(
         "CHROMIUM_FLAGS",
         "--disable-gpu --disable-gpu-compositing --use-angle=swiftshader --disable-dev-shm-usage",
@@ -481,13 +496,14 @@ def rockstar_crossover_launch_target(
     if bypass.app_id == "3240220":
         steam_loc = GTA_V_ENHANCED_INSTALL
     else:
-        steam_loc = (
-            rf"C:\Program Files (x86)\Steam\steamapps\common\{bypass.install_dir}"
-            + "\\"
-        )
+        steam_loc = rf"C:\Program Files (x86)\Steam\steamapps\common\{bypass.install_dir}"
+    # No embedded quotes and no trailing backslash: Wine escapes literal quotes when it
+    # rebuilds the Windows command line, and a trailing backslash before the closing
+    # quote swallows it — the launcher then fails to read <path>\title.rgl.
+    steam_loc = steam_loc.rstrip("\\")
     args = [
         "-skipPatcherCheck",
         f"-steamAppId={app_id}",
-        f'-steamLocation="{steam_loc}"',
+        f"-steamLocation={steam_loc}",
     ]
     return launcher, args

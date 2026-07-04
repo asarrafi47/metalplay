@@ -175,6 +175,122 @@ def wait_for_steam_window(
     return False
 
 
+def wait_for_steam_login(
+    wine_bin: Path | str,
+    bottle: Path,
+    env: dict[str, str],
+    timeout: float = 90.0,
+    *,
+    callback: ProgressCallback = None,
+) -> bool:
+    """
+    Poll until the Steam client has a logged-in user.
+
+    Steam sets HKCU\\Software\\Valve\\Steam\\ActiveProcess\\ActiveUser to the
+    account id after login (0 while at the login screen). Games launched
+    directly (gmod.exe -steam) Sys_Error with "No SteamUser" before that.
+    """
+    import re
+
+    from metalplay.runtime.wine import wine_command
+
+    deadline = time.monotonic() + timeout
+    last_log = 0.0
+    key = r"HKCU\Software\Valve\Steam\ActiveProcess"
+    while time.monotonic() < deadline:
+        try:
+            out = subprocess.run(
+                wine_command(wine_bin, "reg", "query", key, "/v", "ActiveUser"),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            ).stdout
+        except (subprocess.TimeoutExpired, OSError):
+            out = ""
+        match = re.search(r"ActiveUser\s+REG_DWORD\s+0x([0-9a-fA-F]+)", out or "")
+        if match and int(match.group(1), 16) != 0:
+            return True
+        now = time.monotonic()
+        if callback and now - last_log >= 10.0:
+            callback("Waiting for Steam login (finish signing in if prompted)…")
+            last_log = now
+        time.sleep(2.0)
+    return False
+
+
+def activate_app_by_pid(pid: int) -> bool:
+    """
+    Bring a process's Cocoa app frontmost via NSRunningApplication (no
+    accessibility permission needed, unlike System Events scripting).
+
+    Wine game windows created without focus never get ordered on-screen — the
+    game runs invisibly. Activating during startup keeps the window mapped and
+    stops Source borderless windows from instantly minimizing on focus loss.
+    """
+    try:
+        import ctypes
+        import ctypes.util
+
+        appkit = ctypes.util.find_library("AppKit")
+        objc_path = ctypes.util.find_library("objc")
+        if not appkit or not objc_path:
+            return False
+        ctypes.cdll.LoadLibrary(appkit)
+        objc = ctypes.cdll.LoadLibrary(objc_path)
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+        cls = objc.objc_getClass(b"NSRunningApplication")
+        sel_lookup = objc.sel_registerName(b"runningApplicationWithProcessIdentifier:")
+        sel_activate = objc.sel_registerName(b"activateWithOptions:")
+
+        lookup = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int
+        )(("objc_msgSend", objc))
+        app = lookup(cls, sel_lookup, int(pid))
+        if not app:
+            return False
+        activate = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong
+        )(("objc_msgSend", objc))
+        # NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps
+        return bool(activate(app, sel_activate, 3))
+    except (OSError, AttributeError, ValueError):
+        return False
+
+
+def activate_game_when_up(
+    exe_name: str,
+    *,
+    duration: float = 90.0,
+    interval: float = 5.0,
+) -> None:
+    """
+    Poll for a game process by exe name and keep activating its app while it
+    boots. Runs until the process has been seen and activated a few times, or
+    the duration expires. Best-effort; intended for a background thread.
+    """
+    deadline = time.monotonic() + duration
+    activations = 0
+    while time.monotonic() < deadline and activations < 4:
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", exe_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.split()
+        except (OSError, subprocess.SubprocessError):
+            out = []
+        for pid in out:
+            if pid.isdigit() and activate_app_by_pid(int(pid)):
+                activations += 1
+        time.sleep(interval)
+
+
 def kill_stale_steam_processes() -> int:
     """Kill lingering Wine/Steam session processes. Returns number of PIDs signaled."""
     try:

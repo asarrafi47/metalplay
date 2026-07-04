@@ -206,6 +206,45 @@ def swap_bottle_to_wined3d(bottle: Path) -> list[str]:
     return changed
 
 
+def swap_bottle_to_dxvk(bottle: Path) -> list[str]:
+    """
+    Put stock Wine dxgi + DXVK d3d11/d3d10core in the bottle
+    (D3D11 feature level 11 over winevulkan → MoltenVK → Metal).
+
+    Used for the Rockstar Launcher UI on free Wine (wined3d on macOS OpenGL tops
+    out at feature level 10_1, which its engine rejects right after
+    "Initializing group 1") and for the opt-in `-g dxvk` game backend.
+    """
+    from metalplay.runtime.dxvk import ensure_dxvk_cache
+
+    cache = ensure_dxvk_cache()
+    windows = bottle / "drive_c/windows"
+
+    # Already swapped? (d3d11 is DXVK-sized) — skip the wined3d pass so repeated
+    # launches don't churn ~8 MB of DLL copies.
+    current = windows / "system32/d3d11.dll"
+    dxvk_d3d11 = cache / "x64/d3d11.dll"
+    if current.is_file() and current.stat().st_size == dxvk_d3d11.stat().st_size:
+        changed: list[str] = []
+    else:
+        # Stock dxgi/d3d11/d3d10core first (also backs up DXMT copies), then DXVK on top.
+        changed = swap_bottle_to_wined3d(bottle)
+    for arch_dir, win_subdir in (("x64", "system32"), ("x32", "syswow64")):
+        dst_dir = windows / win_subdir
+        if not dst_dir.is_dir():
+            continue
+        for dll in ("d3d11.dll", "d3d10core.dll"):
+            src = cache / arch_dir / dll
+            if not src.is_file():
+                continue
+            dst = dst_dir / dll
+            if dst.is_file() and dst.stat().st_size == src.stat().st_size:
+                continue
+            shutil.copy2(src, dst)
+            changed.append(f"{win_subdir}/{dll} (dxvk)")
+    return changed
+
+
 def swap_bottle_to_dxmt(bottle: Path) -> list[str]:
     """Restore DXMT graphics DLLs in the bottle after a wined3d swap."""
     windows = bottle / "drive_c/windows"
